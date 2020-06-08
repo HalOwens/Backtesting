@@ -4,20 +4,30 @@ from polygon import RESTClient
 from backtest import backTest
 import os
 
+b = list()
+
+
 def TradingSystem(prices):
     """
     This functioned is called every day with the new price data made available to it
     :param prices: this is a list of dictionaries with index zero being the oldest price data
     """
-    print("hello)")
+    print(prices['AAPL'][4]['t'])
+    print("iteration #")
+    b.append(prices['AAPL'][4]['o'])
+    print(len(b))
+
 
 def main():
     tickers = ['AAPL']
-    #back_tester = backTest('2018-01-01', '2020-04-30', 60, 100000, tickers, TradingSystem)
-    #back_tester.trade()
-    client = RESTClient(os.environ['APCA_API_KEY_ID'])
+    back_tester = backTest('2020-01-08', '2020-05-07', 5, 100000, tickers, TradingSystem)
+    back_tester.trade()
+    plt.plot(b)
+    plt.show()
 
-    response = client.stocks_equities_aggregates('AAPL', 1, 'day', '2020-01-01', '2020-01-03')
+
+    client = RESTClient(os.environ['APCA_API_KEY_ID'])
+    response = client.stocks_equities_aggregates('AAPL', 1, 'day', '2020-01-07', '2020-01-08')
 
 
 

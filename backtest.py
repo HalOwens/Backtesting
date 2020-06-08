@@ -17,6 +17,30 @@ class backTest:
     """
     This class provides a structured way for accessing data and executing trades
     """
+    __NYSE_HOLIDAYS = list(map(datetime.date.fromisoformat, ['2012-01-02', '2012-01-16', '2012-02-20', '2012-04-06',
+                                                             '2012-05-28', '2012-07-04', '2012-09-03', '2012-11-22',
+                                                             '2012-12-25', '2013-01-01', '2013-01-21', '2013-02-18',
+                                                             '2013-03-29', '2013-05-27', '2013-07-04', '2013-09-02',
+                                                             '2013-11-28', '2013-12-25', '2014-01-01', '2014-01-20',
+                                                             '2014-02-17', '2014-04-18', '2014-05-26', '2014-07-04',
+                                                             '2014-09-01', '2014-11-27', '2014-12-25', '2015-01-01',
+                                                             '2015-01-19', '2015-02-16', '2015-04-03', '2015-05-25',
+                                                             '2015-07-03', '2015-09-07', '2015-11-26', '2015-12-25',
+                                                             '2016-01-01', '2016-01-18', '2016-02-15', '2016-03-25',
+                                                             '2016-05-30', '2016-07-04', '2016-09-05', '2016-11-24',
+                                                             '2016-12-26', '2017-01-02', '2017-01-16', '2017-02-20',
+                                                             '2017-04-14', '2017-05-29', '2017-07-04', '2017-09-04',
+                                                             '2017-11-23', '2017-12-25', '2018-01-01', '2018-01-15',
+                                                             '2018-02-19', '2018-03-30', '2018-05-28', '2018-07-04',
+                                                             '2018-09-03', '2018-11-22', '2018-12-25', '2019-01-01',
+                                                             '2019-01-21', '2019-02-18', '2019-04-19', '2019-05-27',
+                                                             '2019-07-04', '2019-11-02', '2019-11-28', '2019-12-25',
+                                                             '2020-01-01', '2020-01-20', '2020-02-17', '2020-04-10',
+                                                             '2020-05-25', '2020-07-03', '2020-11-26', '2020-12-25',
+                                                             '2021-01-01', '2021-01-18', '2021-02-15', '2021-04-02',
+                                                             '2021-05-31', '2021-07-05', '2021-09-06', '2021-11-25',
+                                                             '2021-12-24']))
+
     def __init__(self, begin_date, end_date, look_back, cash, tickers, trading_func, bar_distance='day', slippage=0.02):
         """
         Dates must be given in the ISO 8601 Format specification YYYY-MM-DD
@@ -39,15 +63,24 @@ class backTest:
         self.bar_distance = bar_distance
         self.slippage = slippage
 
+    #TODO Need to more thouroughly verify that this works
+    def correct_begin_date(self):
+        """
+        This function gives us the date we need to begin our data collection from by accounting for weekends and nyse
+        holidays
+        """
+        temp_lookback = self.look_back.days #When Extending for other timeframes this function will likely require overhaul
+        while temp_lookback > 0:
+            if self.begin_date.isoweekday() == 7:
+                self.begin_date -= datetime.timedelta(days=2)
+            elif self.begin_date.isoweekday() == 6:
+                self.begin_date -= datetime.timedelta(days=1)
+            elif self.begin_date in self.__NYSE_HOLIDAYS:
+                self.begin_date -= datetime.timedelta(days=1)
+            else:
+                self.begin_date -= datetime.timedelta(days=1)
+                temp_lookback -= 1
 
-    #TODO Get the system to handle trading holidays
-    #Current way of approaching this is to pull 20 extra days of data and then figure out where in the data received is
-    #the beginning date. Once you find that you should be able to pull the lookback period amount of data prior to that
-    #date and get all the info you need
-    #Concerns
-    #20 is an arbitrary number that will likely not work for sufficiently long lookback periods. Aka if there are more
-    #   than 20 holidays and weekends in the period its going to fail
-    #While I could just make 20 into something huge that would diminish how far back I can retrieve data
     def trade(self):
         """
         This function when called begins the cycle of trading. Note that the data the system has access
@@ -56,25 +89,21 @@ class backTest:
         :return:
         """
         client = RESTClient(self.api_key)
-        current_date = self.begin_date
         asset = dict()
+        self.correct_begin_date()
         for stock in self.tickers:
             response = client.stocks_equities_aggregates(stock, 1, self.bar_distance,
-                                                         self.begin_date - datetime.timedelta(days=self.look_back)
-                                                         - datetime.timedelta(days=20), self.end_date) #Currently need to find the proper date in the aggregated data
+                                                         self.begin_date - datetime.timedelta(days=1), self.end_date)
             if response.results is None: #Make sure that data is actually gotten
                     raise Exception("Unable to retrieve market data")
             asset[stock] = response.results
+
         offset = 0
-        while current_date <= self.end_date:
+        while offset + self.look_back.days <= len(asset[self.tickers[0 ]]): #TODO Is every stock going to have the exact same amount of days?
             truncated_data = dict()
             for stock in self.tickers:
                 truncated_data[stock] = asset[stock][offset:self.look_back.days + offset] #Creates the set of data that only includes the current lookback period
             self.trading_func(truncated_data)
-            if current_date.isoweekday() == 5:
-                current_date += datetime.timedelta(days=3)
-            elif current_date.isoweekday() == 6:
-                current_date += datetime.timedelta(days=2)
-            else:
-                current_date += datetime.timedelta(days=1)
+            offset += 1
+            print(self.look_back.days + offset)
 
