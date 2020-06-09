@@ -1,6 +1,7 @@
 import os
 from polygon import RESTClient
 import datetime
+from portfolio import portfolio
 
 """
     Current Idea for flow of trades and information
@@ -44,27 +45,29 @@ class backTest:
     def __init__(self, begin_date, end_date, look_back, cash, tickers, trading_func, bar_distance='day', slippage=0.02):
         """
         Dates must be given in the ISO 8601 Format specification YYYY-MM-DD
-        :param beginDate: Date upon which trading will initiate
-        :param endDate: Date upon which trading will end
-        :param lookBack: Period in days which the system will have access to at any given time
+        :param begin_date: Date upon which trading will initiate
+        :param end_date: Date upon which trading will end
+        :param look_back: Period in days which the system will have access to at any given time
         :param cash: Amount of liquid cash the account starts with
         :param tickers: list containing all stocks to be traded
         :param trading_func function that is called on each trading period
-        :param barDistance: minute, hour, day, week etc
+        :param bar_distance: minute, hour, day, week etc
         :param slippage: frictional trade coefficient meant to simulate slippage
         """
         self.api_key = os.environ['APCA_API_KEY_ID']
         self.begin_date = datetime.date.fromisoformat(begin_date)
         self.end_date = datetime.date.fromisoformat(end_date)
         self.look_back = datetime.timedelta(days=look_back)
-        self.cash = cash
-        self.tickers = tickers
+        self.initial_cash = cash
+        self.portfolio = portfolio(tickers, cash)
         self.trading_func = trading_func
         self.bar_distance = bar_distance
         self.slippage = slippage
+        self.date_offset = 0
+        self.asset = dict()
 
     #TODO Need to more thouroughly verify that this works
-    def correct_begin_date(self):
+    def __correct_begin_date(self):
         """
         This function gives us the date we need to begin our data collection from by accounting for weekends and nyse
         holidays
@@ -81,6 +84,21 @@ class backTest:
                 self.begin_date -= datetime.timedelta(days=1)
                 temp_lookback -= 1
 
+    def __calc_pl(self):
+        """
+        Calculate and display the results of the trading
+        """
+        net_value = self.portfolio.cash
+        for ticker in self.portfolio.tickers:
+            data = self.asset[ticker][self.look_back.days + self.date_offset] #Subtract one because we incremented offset an extra time
+            price = data['c']
+            quantity = self.portfolio.holdings[ticker]
+            net_value += price * quantity
+        print("Portfolio Value {:.2f}".format(net_value))
+        print("Initial Investment {:.2f}".format(self.initial_cash))
+        print("Net Profit {:.2f}".format(net_value-self.initial_cash))
+        print("Percent return {:.2f}%".format(100 * ((net_value/self.initial_cash) - 1)))
+
     def trade(self):
         """
         This function when called begins the cycle of trading. Note that the data the system has access
@@ -89,21 +107,42 @@ class backTest:
         :return:
         """
         client = RESTClient(self.api_key)
-        asset = dict()
-        self.correct_begin_date()
-        for stock in self.tickers:
+        tickers = self.portfolio.tickers
+        self.__correct_begin_date()
+        for stock in tickers:
             response = client.stocks_equities_aggregates(stock, 1, self.bar_distance,
-                                                         self.begin_date - datetime.timedelta(days=1), self.end_date)
+                                                         self.begin_date - datetime.timedelta(days=1),
+                                                         self.end_date + datetime.timedelta(days=1))
             if response.results is None: #Make sure that data is actually gotten
                     raise Exception("Unable to retrieve market data")
-            asset[stock] = response.results
+            self.asset[stock] = response.results
 
-        offset = 0
-        while offset + self.look_back.days <= len(asset[self.tickers[0 ]]): #TODO Is every stock going to have the exact same amount of days?
+        while self.date_offset + self.look_back.days < len(self.asset[tickers[0]]) - 1: #TODO Is every stock going to have the exact same amount of days?
             truncated_data = dict()
-            for stock in self.tickers:
-                truncated_data[stock] = asset[stock][offset:self.look_back.days + offset] #Creates the set of data that only includes the current lookback period
+            for stock in tickers:
+                truncated_data[stock] = self.asset[stock][self.date_offset:self.look_back.days + self.date_offset] #Creates the set of data that only includes the current lookback period
             self.trading_func(truncated_data)
-            offset += 1
-            print(self.look_back.days + offset)
+            self.date_offset += 1
+        self.__calc_pl()
 
+    def sell(self, ticker, quantity):
+        """
+        Sells the asset at the open price of the next trading period
+        :param ticker: Asset to be sold
+        :param quantity: Quantity of asset to sell
+        """
+        data = self.asset[ticker][self.look_back.days + self.date_offset]
+        price = data['o']
+        date = datetime.datetime.utcfromtimestamp(data['t']/1000)
+        self.portfolio.sell(ticker, price, date, quantity)
+
+    def buy(self, ticker, quantity):
+        """
+        Buys the asset at the open price of the next trading period
+        :param ticker: Asset to be purchased
+        :param quantity: Quantity to purchase
+        """
+        data = self.asset[ticker][self.look_back.days + self.date_offset]
+        price = data['o']
+        date = datetime.datetime.utcfromtimestamp(data['t']/1000)
+        self.portfolio.add(ticker, price, date, quantity)
